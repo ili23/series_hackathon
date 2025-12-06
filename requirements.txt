@@ -3,7 +3,7 @@ kafka-python==2.3.0
 python-dotenv==1.0.0
 requests==2.31.0
 openai-whisper
-SQLAlchemy
+SQLAlchemy==2.0.25
 pytest
 pytest-cov
 

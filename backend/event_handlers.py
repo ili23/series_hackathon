@@ -3,7 +3,11 @@ Event handlers for processing Kafka events
 """
 import json
 import logging
+from datetime import datetime
 from voice_processor import process_voice_attachments, is_audio_attachment
+from language_mapper import get_language_name
+from db.accessors import add_voice_message, add_to_user_table
+from conversation_flow import handle_new_language_detected, process_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -37,19 +41,88 @@ def handle_message_received(event_data):
             
             for i, transcription in enumerate(transcriptions):
                 if transcription.get('success'):
-                    logger.info(f"Voice message {i+1} transcription: {transcription['text']}")
-                    logger.info(f"  Detected language: {transcription.get('language', 'unknown')}")
+                    english_text = transcription.get('text', '')
+                    original_text = transcription.get('original_text', '')
+                    language_code = transcription.get('language', 'unknown')
+                    language_name = get_language_name(language_code)
                     
-                    # TODO: Store transcription in database
-                    # TODO: Send transcription back to user or store for later
+                    # Print detailed transcription results
+                    print("\n" + "="*80)
+                    print("VOICE MESSAGE TRANSCRIPTION SUCCESSFUL")
+                    print("="*80)
+                    print(f"Message ID: {message_id}")
+                    print(f"From Phone: {from_phone}")
+                    print(f"Chat ID: {chat_id}")
+                    print(f"\n📝 Transcription (English):")
+                    print(f"   {english_text}")
+                    if original_text and original_text != english_text:
+                        print(f"\n🌍 Original Language ({language_name}):")
+                        print(f"   {original_text}")
+                    print(f"\n🌐 Language Information:")
+                    print(f"   Language Code: {language_code}")
+                    print(f"   Language Name: {language_name}")
+                    print("="*80 + "\n")
+                    
+                    logger.info(f"Voice message {i+1} transcription (English): {english_text}")
+                    if original_text and original_text != english_text:
+                        logger.info(f"Voice message {i+1} transcription (Original): {original_text}")
+                    logger.info(f"  Detected language code: {language_code}")
+                    logger.info(f"  Language name: {language_name}")
+                    
+                    # Get attachment URL or use a placeholder
+                    attachment_url = voice_attachments[i].get('url', f'voice_message_{message_id}_{i}')
+                    attachment_filename = voice_attachments[i].get('filename', 'voice.m4a')
+                    attachment_mime_type = voice_attachments[i].get('mime_type', 'audio/m4a')
+                    
+                    # Store voice message in database
+                    if from_phone:
+                        # Ensure user exists in database
+                        add_to_user_table(from_phone, "", "")  # Will create or update user
+                        
+                        # Add voice message
+                        voice_msg_id = add_voice_message(
+                            phone_number=from_phone,
+                            transcription=original_text,  # Store original language transcription
+                            url=attachment_url,
+                            primary_language=language_code,
+                            metadata={
+                                'filename': attachment_filename,
+                                'mime_type': attachment_mime_type
+                            },
+                            timestamp=datetime.utcnow()
+                        )
+                        
+                        if voice_msg_id:
+                            print(f"✅ Successfully saved voice message to database (ID: {voice_msg_id})")
+                            logger.info(f"Successfully saved voice message {voice_msg_id} for {from_phone}")
+                            
+                            # Check if this is a new language and trigger conversation flow
+                            from conversation_flow import is_new_language_for_user
+                            if is_new_language_for_user(from_phone, language_name):
+                                print(f"🆕 New language detected: {language_name} for {from_phone}")
+                                logger.info(f"New language {language_name} detected for {from_phone}, starting conversation flow")
+                                handle_new_language_detected(from_phone, language_name, chat_id)
+                            else:
+                                print(f"✅ Language {language_name} already exists for {from_phone}")
+                                logger.info(f"Language {language_name} already exists for {from_phone}")
+                        else:
+                            print(f"⚠️  Failed to save voice message to database")
+                            logger.warning(f"Failed to save voice message for {from_phone}")
                 else:
-                    logger.error(f"Failed to transcribe voice message {i+1}: {transcription.get('error')}")
+                    error = transcription.get('error', 'Unknown error')
+                    print("\n" + "="*80)
+                    print("VOICE MESSAGE TRANSCRIPTION FAILED")
+                    print("="*80)
+                    print(f"Message ID: {message_id}")
+                    print(f"From Phone: {from_phone}")
+                    print(f"Error: {error}")
+                    print("="*80 + "\n")
+                    logger.error(f"Failed to transcribe voice message {i+1}: {error}")
     
-    # TODO: Add your business logic here
-    # - Store message in database
-    # - Trigger notifications
-    # - Process message content
-    # - etc.
+    # Process text messages for conversation flow
+    if text and from_phone:
+        # Check if there's an active conversation state
+        process_conversation(from_phone, text, chat_id)
 
 
 def handle_typing_indicator_received(event_data):
