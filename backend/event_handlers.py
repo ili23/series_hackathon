@@ -7,7 +7,12 @@ from datetime import datetime
 from voice_processor import process_voice_attachments, is_audio_attachment
 from language_mapper import get_language_name
 from db.accessors import add_voice_message, add_to_user_table
-from conversation_flow import handle_new_language_detected, process_conversation
+from conversation_flow import (
+    handle_new_language_detected, 
+    handle_existing_language_detected, 
+    process_conversation,
+    is_yes_response
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +24,13 @@ def handle_message_received(event_data):
     # Extract relevant information
     message_id = event_data.get('id')
     chat_id = event_data.get('chat_id')
-    from_phone = event_data.get('from_phone')
+    from_phone = event_data.get('from_phone')  # User who sent the message (will receive agent responses)
     text = event_data.get('text')
     is_read = event_data.get('is_read')
     attachments = event_data.get('attachments', [])
     
-    logger.info(f"New message from {from_phone} in chat {chat_id}: {text}")
+    logger.info(f"📨 INCOMING MESSAGE: From user {from_phone} in chat {chat_id}: {text}")
+    logger.info(f"   Agent number (+16463230991) will respond to user: {from_phone}")
     
     # Check for voice message attachments
     if attachments:
@@ -38,9 +44,20 @@ def handle_message_received(event_data):
         voice_attachments = [att for att in attachments if is_audio_attachment(att)]
         
         if voice_attachments:
-            logger.info(f"Found {len(voice_attachments)} voice message(s), transcribing with local Whisper...")
+            logger.info(f"🎤 VOICE MESSAGE DETECTED: Found {len(voice_attachments)} voice message(s) from user {from_phone}")
+            logger.info(f"   Transcribing with local Whisper...")
+            logger.info(f"   Agent (+16463230991) will automatically respond after transcription if new language detected")
+            
+            # Log URLs for debugging
+            for i, att in enumerate(voice_attachments):
+                url = att.get('url')
+                if url:
+                    logger.info(f"  Voice attachment {i+1} URL: {url}")
+                else:
+                    logger.warning(f"  Voice attachment {i+1} has no URL, will try data_base64 if available")
             
             # Process voice attachments (transcribe to English using local Whisper)
+            # This will use URLs if available, or fall back to data_base64
             transcriptions = process_voice_attachments(voice_attachments, translate_to_english=True)
             
             for i, transcription in enumerate(transcriptions):
@@ -72,6 +89,12 @@ def handle_message_received(event_data):
                         logger.info(f"Voice message {i+1} transcription (Original): {original_text}")
                     logger.info(f"  Detected language code: {language_code}")
                     logger.info(f"  Language name: {language_name}")
+                    
+                    # Log specifically for Chinese and Spanish detection
+                    if language_code.lower().startswith('zh') or language_name.lower() == 'chinese':
+                        logger.info(f"🇨🇳 CHINESE DETECTED: Language code '{language_code}' mapped to '{language_name}'")
+                    elif language_code.lower().startswith('es') or language_name.lower() == 'spanish':
+                        logger.info(f"🇪🇸 SPANISH DETECTED: Language code '{language_code}' mapped to '{language_name}'")
                     
                     # Get attachment URL or use a placeholder
                     attachment_url = voice_attachments[i].get('url', f'voice_message_{message_id}_{i}')
@@ -112,10 +135,14 @@ def handle_message_received(event_data):
                                     if is_new_language_for_user(from_phone, language_name):
                                         print(f"🆕 New language detected: {language_name} for {from_phone}")
                                         logger.info(f"New language {language_name} detected for {from_phone}, starting conversation flow")
+                                        logger.info(f"🤖 AGENT AUTO-RESPONSE: Agent number (+16463230991) will automatically send message to user {from_phone} about new language {language_name}")
                                         handle_new_language_detected(from_phone, language_name, chat_id)
                                     else:
                                         print(f"✅ Language {language_name} already exists for {from_phone}")
                                         logger.info(f"Language {language_name} already exists for {from_phone}")
+                                        # Trigger workflow for existing language - ask if they want to be matched
+                                        logger.info(f"🤖 AGENT AUTO-RESPONSE: Agent number (+16463230991) will automatically send message to user {from_phone} about existing language {language_name}")
+                                        handle_existing_language_detected(from_phone, language_name, chat_id)
                                 except Exception as e:
                                     logger.error(f"Error checking/processing new language: {e}", exc_info=True)
                             else:
@@ -138,9 +165,26 @@ def handle_message_received(event_data):
                     logger.error(f"Failed to transcribe voice message {i+1}: {error}")
     
     # Process text messages for conversation flow
+    # Parse text attribute and from_phone number to continue workflow
     if text and from_phone:
-        # Check if there's an active conversation state
-        process_conversation(from_phone, text, chat_id)
+        text_cleaned = text.strip() if text else ""
+        logger.info(f"📨 TEXT MESSAGE RECEIVED: From {from_phone}, text: '{text_cleaned[:100]}{'...' if len(text_cleaned) > 100 else ''}'")
+        logger.info(f"   Parsing response: text='{text_cleaned}', from_phone='{from_phone}'")
+        
+        # Check if response contains "yes" to continue workflow
+        is_yes = is_yes_response(text_cleaned)
+        logger.info(f"   Response analysis: is_yes={is_yes}, will continue workflow if in active state")
+        
+        logger.info(f"   Agent (+16463230991) will process this response and continue workflow")
+        logger.info(f"   Processing conversation flow for user {from_phone}")
+        
+        # Process conversation - this will parse "yes" responses and continue workflow:
+        # - If "yes" to add language → adds user to language database, continues workflow
+        # - If "yes" to matching → sends random user profile from database, continues workflow
+        # - If "yes" to group chat → creates group chat via iMessage API, exits workflow
+        # - If "no" at any point → exits workflow
+        # Workflow continues through states until completion or exit
+        process_conversation(from_phone, text_cleaned, chat_id)
 
 
 def handle_typing_indicator_received(event_data):

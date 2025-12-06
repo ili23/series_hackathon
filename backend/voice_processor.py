@@ -6,6 +6,8 @@ import os
 import requests
 import tempfile
 import whisper
+import subprocess
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,62 @@ def is_audio_attachment(attachment):
     return any(mime_type.startswith(audio_type) for audio_type in audio_types)
 
 
+def check_ffmpeg():
+    """Check if ffmpeg is available in PATH"""
+    ffmpeg_path = shutil.which('ffmpeg')
+    if ffmpeg_path:
+        logger.info(f"Found ffmpeg at: {ffmpeg_path}")
+        return True
+    else:
+        logger.warning("ffmpeg not found in PATH. Whisper requires ffmpeg to process audio files.")
+        logger.warning("Please install ffmpeg: https://ffmpeg.org/download.html")
+        logger.warning("Or use: choco install ffmpeg (if Chocolatey is installed)")
+        return False
+
+
+def convert_audio_to_wav(input_path: str, output_path: str = None):
+    """
+    Convert audio file to WAV format using ffmpeg if available
+    
+    Args:
+        input_path: Path to input audio file
+        output_path: Path to output WAV file (optional, creates temp file if not provided)
+    
+    Returns:
+        Path to converted WAV file, or original path if conversion not needed/failed
+    """
+    if not output_path:
+        output_path = input_path.rsplit('.', 1)[0] + '.wav'
+    
+    ffmpeg_path = shutil.which('ffmpeg')
+    if not ffmpeg_path:
+        logger.warning("ffmpeg not found, trying to use original file")
+        return input_path
+    
+    try:
+        # Convert to WAV format (16kHz, mono, 16-bit PCM)
+        cmd = [
+            ffmpeg_path,
+            '-i', input_path,
+            '-ar', '16000',  # Sample rate 16kHz (Whisper's requirement)
+            '-ac', '1',      # Mono channel
+            '-acodec', 'pcm_s16le',  # 16-bit PCM
+            '-y',            # Overwrite output file
+            output_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            logger.info(f"Converted audio to WAV: {output_path}")
+            return output_path
+        else:
+            logger.warning(f"ffmpeg conversion failed: {result.stderr}")
+            return input_path
+    except Exception as e:
+        logger.warning(f"Error converting audio: {e}, using original file")
+        return input_path
+
+
 def transcribe_voice_message_from_url(url: str):
     """
     Transcribe a voice message from a URL using local Whisper model
@@ -46,8 +104,14 @@ def transcribe_voice_message_from_url(url: str):
     Returns:
         dict with 'text', 'language', 'original_text', and 'success' keys
     """
+    temp_path = None
+    converted_path = None
+    
     try:
         logger.info(f"Transcribing voice message from URL: {url}")
+        
+        # Check for ffmpeg
+        check_ffmpeg()
         
         # Download the audio file temporarily
         response = requests.get(url, timeout=30)
@@ -74,19 +138,26 @@ def transcribe_voice_message_from_url(url: str):
         
         logger.info(f"Saved audio to temporary file: {temp_path}")
         
+        # Try to convert to WAV if not already WAV (helps with compatibility)
+        if file_extension != '.wav':
+            converted_path = convert_audio_to_wav(temp_path)
+            audio_path = converted_path if converted_path != temp_path else temp_path
+        else:
+            audio_path = temp_path
+        
         try:
             # Load Whisper model
             model = get_whisper_model()
             
             # First, transcribe in original language
             logger.info("Transcribing in original language...")
-            result_original = model.transcribe(temp_path, task="transcribe")
+            result_original = model.transcribe(audio_path, task="transcribe")
             original_text = result_original.get('text', '').strip()
             detected_language = result_original.get('language', 'unknown')
             
             # Then, translate to English
             logger.info("Translating to English...")
-            result_english = model.transcribe(temp_path, task="translate")
+            result_english = model.transcribe(audio_path, task="translate")
             english_text = result_english.get('text', '').strip()
             
             logger.info("Transcription successful")
@@ -102,15 +173,34 @@ def transcribe_voice_message_from_url(url: str):
             }
             
         finally:
-            # Clean up temporary file
-            try:
-                os.unlink(temp_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete temp file {temp_path}: {e}")
+            # Clean up temporary files
+            for path in [temp_path, converted_path]:
+                if path and path != temp_path and os.path.exists(path):
+                    try:
+                        os.unlink(path)
+                        logger.debug(f"Deleted temp file: {path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete temp file {path}: {e}")
+            
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp file {temp_path}: {e}")
                 
     except requests.exceptions.RequestException as e:
         logger.error(f"Error downloading audio from URL: {e}")
         return {'success': False, 'error': f'Failed to download audio: {e}'}
+    except FileNotFoundError as e:
+        error_msg = str(e)
+        if 'ffmpeg' in error_msg.lower() or 'The system cannot find the file specified' in error_msg:
+            logger.error("ffmpeg is required but not found. Please install ffmpeg:")
+            logger.error("  Windows: choco install ffmpeg (or download from https://ffmpeg.org/download.html)")
+            logger.error("  Or add ffmpeg to your system PATH")
+            return {'success': False, 'error': 'ffmpeg not found. Please install ffmpeg to process audio files.'}
+        else:
+            logger.error(f"Error transcribing voice message: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
     except Exception as e:
         logger.error(f"Error transcribing voice message: {e}", exc_info=True)
         return {'success': False, 'error': str(e)}
@@ -164,20 +254,33 @@ def transcribe_voice_message(attachment, translate_to_english=True):
             temp_file.write(audio_data)
             temp_path = temp_file.name
         
+        converted_path = None
+        
         try:
+            # Check for ffmpeg
+            check_ffmpeg()
+            
+            # Try to convert to WAV if not already WAV (helps with compatibility)
+            file_ext = os.path.splitext(temp_path)[1].lower()
+            if file_ext != '.wav':
+                converted_path = convert_audio_to_wav(temp_path)
+                audio_path = converted_path if converted_path != temp_path else temp_path
+            else:
+                audio_path = temp_path
+            
             # Load Whisper model
             model = get_whisper_model()
             
             # First, transcribe in original language
             logger.info("Transcribing in original language...")
-            result_original = model.transcribe(temp_path, task="transcribe")
+            result_original = model.transcribe(audio_path, task="transcribe")
             original_text = result_original.get('text', '').strip()
             detected_language = result_original.get('language', 'unknown')
             
             # Then, translate to English
             if translate_to_english:
                 logger.info("Translating to English...")
-                result_english = model.transcribe(temp_path, task="translate")
+                result_english = model.transcribe(audio_path, task="translate")
                 english_text = result_english.get('text', '').strip()
             else:
                 english_text = original_text
@@ -192,12 +295,30 @@ def transcribe_voice_message(attachment, translate_to_english=True):
                 'language': detected_language,
             }
             
+        except FileNotFoundError as e:
+            error_msg = str(e)
+            if 'ffmpeg' in error_msg.lower() or 'The system cannot find the file specified' in error_msg:
+                logger.error("ffmpeg is required but not found. Please install ffmpeg:")
+                logger.error("  Windows: choco install ffmpeg (or download from https://ffmpeg.org/download.html)")
+                logger.error("  Or add ffmpeg to your system PATH")
+                return {'success': False, 'error': 'ffmpeg not found. Please install ffmpeg to process audio files.'}
+            else:
+                raise
         finally:
-            # Clean up temporary file
-            try:
-                os.unlink(temp_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete temp file {temp_path}: {e}")
+            # Clean up temporary files
+            for path in [temp_path, converted_path]:
+                if path and path != temp_path and os.path.exists(path):
+                    try:
+                        os.unlink(path)
+                        logger.debug(f"Deleted temp file: {path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete temp file {path}: {e}")
+            
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp file {temp_path}: {e}")
                 
     except Exception as e:
         logger.error(f"Error transcribing voice message: {e}", exc_info=True)
