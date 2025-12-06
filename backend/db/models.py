@@ -40,7 +40,6 @@ class Language(Base):
     
     phone_number = Column(String, ForeignKey('users.phone_number', ondelete='CASCADE'), primary_key=True)
     language_name = Column(String, primary_key=True)
-    proficiency = Column(String, nullable=True)  # Optional proficiency level
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationship

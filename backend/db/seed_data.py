@@ -58,21 +58,20 @@ def seed_database():
         
         # Add languages for users
         languages = [
-            ('+16469324962', 'English', 'Native'),
-            ('+16469324962', 'Spanish', 'Intermediate'),
-            ('+19172156679', 'English', 'Native'),
-            ('+19172156679', 'Mandarin', 'Fluent'),
-            ('+19172156679', 'French', 'Basic'),
+            ('+16469324962', 'English'),
+            ('+16469324962', 'Spanish'),
+            ('+19172156679', 'English'),
+            ('+19172156679', 'Mandarin'),
+            ('+19172156679', 'French'),
         ]
         
-        for phone_number, language_name, proficiency in languages:
+        for phone_number, language_name in languages:
             success = add_language_for_user(
                 language_name=language_name,
                 phone_number=phone_number,
-                proficiency=proficiency
             )
             if success:
-                logger.info(f"  ✓ Added {language_name} ({proficiency}) for {phone_number}")
+                logger.info(f"  ✓ Added {language_name} for {phone_number}")
             else:
                 logger.warning(f"  ✗ Failed to add language {language_name} for {phone_number}")
         

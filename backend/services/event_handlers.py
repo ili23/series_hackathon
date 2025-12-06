@@ -7,7 +7,7 @@ from datetime import datetime
 from backend.services.voice_processor import process_voice_attachments, is_audio_attachment
 from backend.services.language_mapper import get_language_name
 from backend.db.accessors import add_voice_message, add_to_user_table
-from backend.services.conversation_flow import handle_new_language_detected, process_conversation
+from backend.services.conversation_flow import handle_new_language_detected, process_conversation, reset_conversation
 from backend.api.series_api_client import send_message
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,10 @@ def handle_message_received(event_data):
         
         if voice_attachments:
             logger.info(f"Transcribing {len(voice_attachments)} voice message(s)...")
+            
+            # Reset conversation state on new voice messages to restart workflows
+            if from_phone:
+                reset_conversation(from_phone)
             
             # Process voice attachments (transcribe to English using local Whisper)
             transcriptions = process_voice_attachments(voice_attachments, translate_to_english=True)
@@ -92,12 +96,15 @@ def handle_message_received(event_data):
                                 
                                 # Check if this is a new language and trigger conversation flow
                                 try:
-                                    from backend.services.conversation_flow import is_new_language_for_user
+                                    from backend.services.conversation_flow import is_new_language_for_user, handle_existing_language_detected
                                     if is_new_language_for_user(from_phone, language_name):
                                         logger.info(f"New language {language_name} detected for {from_phone}")
                                         handle_new_language_detected(from_phone, language_name, chat_id)
+                                    else:
+                                        logger.info(f"Existing language {language_name} detected for {from_phone}")
+                                        handle_existing_language_detected(from_phone, language_name, chat_id)
                                 except Exception as e:
-                                    logger.error(f"Error processing new language: {e}", exc_info=True)
+                                    logger.error(f"Error processing language workflow: {e}", exc_info=True)
                             else:
                                 logger.error(f"Failed to save voice message (add_voice_message returned None)")
                         except Exception as e:

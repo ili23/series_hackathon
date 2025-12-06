@@ -87,7 +87,6 @@ class TestAddLanguageForUser:
             result = add_language_for_user(
                 language_name=sample_language_data['language_name'],
                 phone_number=sample_language_data['phone_number'],
-                proficiency=sample_language_data['proficiency']
             )
             assert result is True
             
@@ -103,7 +102,6 @@ class TestAddLanguageForUser:
                 language_name=sample_language_data['language_name']
             ).first()
             assert language is not None
-            assert language.proficiency == sample_language_data['proficiency']
             session.close()
     
     def test_add_multiple_languages(self, test_db, sample_language_data):
@@ -113,7 +111,6 @@ class TestAddLanguageForUser:
             result1 = add_language_for_user(
                 language_name='English',
                 phone_number=sample_language_data['phone_number'],
-                proficiency='Native'
             )
             assert result1 is True
             
@@ -121,7 +118,6 @@ class TestAddLanguageForUser:
             result2 = add_language_for_user(
                 language_name='Spanish',
                 phone_number=sample_language_data['phone_number'],
-                proficiency='Intermediate'
             )
             assert result2 is True
             

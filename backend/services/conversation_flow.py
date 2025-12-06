@@ -11,6 +11,7 @@ from backend.db.accessors import (
     set_last_agent_message,
     get_last_agent_context,
     get_latest_voice_message_language,
+    clear_last_agent_context,
 )
 from backend.db.database import get_db_session
 from backend.db.models import Language, User
@@ -76,6 +77,17 @@ def clear_conversation_state(phone_number: str):
         del _CONVERSATION_STATES[phone_number]
 
 
+def reset_conversation(phone_number: str):
+    """
+    Clear in-memory and persisted agent context to restart workflows cleanly.
+    """
+    clear_conversation_state(phone_number)
+    try:
+        clear_last_agent_context(phone_number)
+    except Exception:
+        logger.exception(f"Failed clearing persisted agent context for {phone_number}")
+
+
 def handle_new_language_detected(phone_number: str, language_name: str, chat_id: int):
     """
     Handle when a new language is detected for a user
@@ -95,7 +107,7 @@ def handle_new_language_detected(phone_number: str, language_name: str, chat_id:
     
     # Send message asking if they want to add the language
     # phone_number is the user who sent the message (from_phone from event)
-    message = "I noticed this is a new language for you. Do you want me to add this language proficiency to our table for future matching?"
+    message = "I noticed this is a new language for you. Do you want me to add this language to our table for future matching?"
     
     # Log that agent is automatically responding to voice message
     logger.info(f"🤖 AGENT AUTO-RESPONSE TRIGGERED: Agent number (+16463230991) is automatically sending message to user {phone_number}")
@@ -228,7 +240,7 @@ def handle_existing_language_detected(phone_number: str, language_name: str, cha
     logger.info(f"💾 CONVERSATION STATE SET: User {phone_number} → state='asking_matching', language='{language_name}'")
     
     # Send message asking if they want to be matched
-    message = "We have your language proficiency on file, do you want to be matched with other person who know this language?"
+    message = "We have your language on file, do you want to be matched with other person who know this language?"
     
     # Log that agent is automatically responding to voice message
     logger.info(f"🤖 AGENT AUTO-RESPONSE TRIGGERED: Agent number (+16463230991) is automatically sending message to user {phone_number}")
@@ -735,7 +747,7 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
         else:
             # Invalid response, ask again
             logger.info(f"   ⚠️  Invalid response. Asking again...")
-            message = "Please respond with 'yes' or 'no'. Do you want me to add this language proficiency to our table for future matching?"
+            message = "Please respond with 'yes' or 'no'. Do you want me to add this language to our table for future matching?"
             send_message(phone_number, message, chat_id)
             set_last_agent_message(
                 phone_number,

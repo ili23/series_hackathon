@@ -60,7 +60,7 @@ def add_to_user_table(phone_number: str, f_name: str, l_name: str, bio: Optional
         session.close()
 
 
-def add_language_for_user(language_name: str, phone_number: str, proficiency: Optional[str] = None) -> bool:
+def add_language_for_user(language_name: str, phone_number: str) -> bool:
     """
     Add a language for a user
     
@@ -94,17 +94,13 @@ def add_language_for_user(language_name: str, phone_number: str, proficiency: Op
         ).first()
         
         if existing_lang:
-            logger.info(f"Language {language_name} already exists for {phone_number}, updating proficiency...")
-            if proficiency is not None:
-                existing_lang.proficiency = proficiency
-            session.commit()
+            logger.info(f"Language {language_name} already exists for {phone_number}, skipping add")
             return True
         
         # Create new language entry
         language = Language(
             phone_number=phone_number,
             language_name=language_name,
-            proficiency=proficiency
         )
         session.add(language)
         session.commit()
@@ -301,6 +297,30 @@ def get_latest_voice_message_language(phone_number: str) -> Optional[str]:
     except Exception as e:
         logger.error(f"Error getting latest voice language for {phone_number}: {e}", exc_info=True)
         return None
+    finally:
+        session.close()
+
+
+def clear_last_agent_context(phone_number: str) -> bool:
+    """
+    Clear persisted last agent message/context for a user.
+    """
+    session = get_db_session()
+    try:
+        user = session.query(User).filter_by(phone_number=phone_number).first()
+        if not user:
+            return True
+        user.last_agent_sent_message = None
+        user.last_agent_state = None
+        user.last_agent_language = None
+        user.last_agent_matched_phone = None
+        user.last_agent_shown_phones = None
+        session.commit()
+        return True
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error clearing last agent context for {phone_number}: {e}", exc_info=True)
+        return False
     finally:
         session.close()
 

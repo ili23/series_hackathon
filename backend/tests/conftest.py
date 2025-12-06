@@ -75,7 +75,6 @@ def sample_language_data():
     return {
         'phone_number': '+15551234567',
         'language_name': 'English',
-        'proficiency': 'Native'
     }
 
 
