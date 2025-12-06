@@ -3,7 +3,7 @@ Flask routes for the Series iMessage Service Backend
 """
 import logging
 from flask import jsonify, request
-from kafka_consumer import get_kafka_consumer, is_kafka_consumer_ready
+from backend.kafka_client import get_kafka_consumer, is_kafka_consumer_ready
 
 logger = logging.getLogger(__name__)
 

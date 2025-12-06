@@ -5,7 +5,7 @@ import json
 import logging
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
-from config import KAFKA_CONFIG
+from backend.config import KAFKA_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,10 @@ class KafkaProducerManager:
                 sasl_plain_password=KAFKA_CONFIG['api_secret'],
                 value_serializer=lambda v: json.dumps(v).encode('utf-8'),
             )
-            logger.info("Kafka producer created successfully")
+            logger.debug("Kafka producer created")
             return producer
         except Exception as e:
-            logger.error(f"Error creating Kafka producer: {e}")
+            logger.error(f"Failed to create Kafka producer: {e}")
             return None
     
     def get_producer(self):
@@ -56,7 +56,6 @@ class KafkaProducerManager:
         if self.producer:
             try:
                 self.producer.close()
-                logger.info("Kafka producer closed")
             except Exception as e:
                 logger.error(f"Error closing Kafka producer: {e}")
             finally:
@@ -82,7 +81,7 @@ class KafkaProducerManager:
         
         try:
             future = producer.send(topic, value=value, key=key)
-            logger.debug(f"Message sent to topic {topic}")
+            logger.debug(f"Message sent to {topic}")
             return future
         except Exception as e:
             logger.error(f"Error sending message to Kafka: {e}")

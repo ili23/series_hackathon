@@ -4,12 +4,12 @@ Conversation flow manager for language matching workflow
 import logging
 import random
 from datetime import datetime
-from db.accessors import (
+from backend.db.accessors import (
     add_language_for_user, add_to_user_table, get_user_given_language
 )
-from db.database import get_db_session
-from db.models import Language, User
-from series_api_client import send_message, create_group_chat
+from backend.db.database import get_db_session
+from backend.db.models import Language, User
+from backend.api.series_api_client import send_message, create_group_chat
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def handle_new_language_detected(phone_number: str, language_name: str, chat_id:
     """
     # Check if this is a new language
     if not is_new_language_for_user(phone_number, language_name):
-        logger.info(f"Language {language_name} already exists for {phone_number}")
+        logger.debug(f"Language {language_name} already exists for {phone_number}")
         return
     
     # Set conversation state
@@ -222,6 +222,7 @@ def handle_existing_language_detected(phone_number: str, language_name: str, cha
     logger.info(f"✅ Agent (+16463230991) sent message to user {phone_number} about matching for existing language {language_name}")
 
 
+
 def handle_add_language_response(phone_number: str, response_text: str, language_name: str, chat_id: int):
     """
     Handle user's response to adding language question
@@ -249,7 +250,7 @@ def handle_add_language_response(phone_number: str, response_text: str, language
         clear_conversation_state(phone_number)
         message = "No problem! Let me know if you change your mind."
         send_message(phone_number, message, chat_id)
-        logger.info(f"User {phone_number} declined to add language {language_name}")
+        logger.debug(f"User {phone_number} declined to add {language_name}")
 
 
 def get_users_with_language(language_name: str):
@@ -324,6 +325,7 @@ def handle_matching_response(phone_number: str, response_text: str, language_nam
             message = "Unfortunately, there are no other users who know this language currently."
             logger.info(f"❌ No matching users found for {phone_number} with language {language_name}")
             send_message(phone_number, message, chat_id)
+            logger.info(f"No matches found for {phone_number} ({language_name})")
         else:
             # Show first matching user from database
             matched_user = random.choice(matching_users)
@@ -389,7 +391,7 @@ def handle_matching_response(phone_number: str, response_text: str, language_nam
         clear_conversation_state(phone_number)
         message = "No problem! Let me know if you change your mind."
         send_message(phone_number, message, chat_id)
-        logger.info(f"User {phone_number} declined matching for language {language_name}")
+        logger.debug(f"User {phone_number} declined match for {language_name}")
 
 
 def handle_group_chat_response(phone_number: str, response_text: str, language_name: str, matched_user_phone: str, chat_id: int):
@@ -483,7 +485,7 @@ def handle_group_chat_response(phone_number: str, response_text: str, language_n
         set_conversation_state(phone_number, 'asking_another_match', language_name, None, shown_phones)
         message = "Would you like me to match you with another user who knows this language?"
         send_message(phone_number, message, chat_id)
-        logger.info(f"User {phone_number} declined group chat, asking for another match")
+        logger.debug(f"User {phone_number} declined group chat, requesting another match")
 
 
 def handle_another_match_response(phone_number: str, response_text: str, language_name: str, chat_id: int):
@@ -514,7 +516,7 @@ def handle_another_match_response(phone_number: str, response_text: str, languag
             clear_conversation_state(phone_number)
             message = "Sorry, there are no more users available who know this language."
             send_message(phone_number, message, chat_id)
-            logger.info(f"No more matching users for {phone_number} with language {language_name}")
+            logger.info(f"No more matches for {phone_number} ({language_name})")
         else:
             # Show another matching user
             matched_user = random.choice(available_users)
@@ -558,13 +560,13 @@ def handle_another_match_response(phone_number: str, response_text: str, languag
             profile_text += f"\nWould you like a group chat created with this user?"
             
             send_message(phone_number, profile_text, chat_id)
-            logger.info(f"Showing another profile of {matched_user['phone_number']} to {phone_number}")
+            logger.info(f"Showing another match to {phone_number}: {matched_user['phone_number']}")
     else:
         # User declined
         clear_conversation_state(phone_number)
         message = "No problem! Feel free to ask for matches anytime."
         send_message(phone_number, message, chat_id)
-        logger.info(f"User {phone_number} declined another match for language {language_name}")
+        logger.debug(f"User {phone_number} declined another match for {language_name}")
 
 
 def is_yes_response(text: str) -> bool:

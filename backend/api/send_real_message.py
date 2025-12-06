@@ -4,8 +4,16 @@ Script to send real iMessages using the Series API
 import os
 import sys
 import json
+import logging
 import requests
-from config import SERIES_API_CONFIG
+from backend.config import SERIES_API_CONFIG
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Series API Configuration
 SERIES_API_BASE_URL = SERIES_API_CONFIG['base_url']
@@ -51,31 +59,36 @@ def send_imessage(send_from, to_phone_numbers, message_text, display_name=None):
         payload['chat']['display_name'] = display_name
     
     try:
-        print(f"Sending iMessage...")
-        print(f"  From: {send_from}")
-        print(f"  To: {', '.join(to_phone_numbers if isinstance(to_phone_numbers, list) else [to_phone_numbers])}")
-        print(f"  Message: {message_text}")
-        print(f"  API URL: {url}")
+        logger.info(f"Sending iMessage from {send_from} to {', '.join(to_phone_numbers if isinstance(to_phone_numbers, list) else [to_phone_numbers])}")
+        logger.debug(f"Message: {message_text}")
+        logger.debug(f"API URL: {url}")
         
         response = requests.post(url, headers=headers, json=payload, timeout=30)
         
         if response.status_code in [200, 201]:
             result = response.json()
+            chat_id = result.get('id', 'N/A')
+            message_id = result.get('message', {}).get('id', 'N/A') if 'message' in result else 'N/A'
+            logger.info(f"✓ Message sent successfully! Chat ID: {chat_id}, Message ID: {message_id}")
             print(f"\n✓ Message sent successfully!")
-            print(f"  Chat ID: {result.get('id', 'N/A')}")
-            if 'message' in result:
-                print(f"  Message ID: {result['message'].get('id', 'N/A')}")
+            print(f"  Chat ID: {chat_id}")
+            if message_id != 'N/A':
+                print(f"  Message ID: {message_id}")
             return result
         else:
+            error_msg = f"Error sending message - Status: {response.status_code}, Response: {response.text}"
+            logger.error(error_msg)
             print(f"\n✗ Error sending message:")
             print(f"  Status Code: {response.status_code}")
             print(f"  Response: {response.text}")
             return None
             
     except requests.exceptions.RequestException as e:
+        logger.error(f"✗ Request error: {e}", exc_info=True)
         print(f"\n✗ Request error: {e}")
         return None
     except Exception as e:
+        logger.error(f"✗ Unexpected error: {e}", exc_info=True)
         print(f"\n✗ Unexpected error: {e}")
         return None
 

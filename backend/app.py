@@ -2,13 +2,21 @@
 Series iMessage Service Backend
 A Flask backend that consumes Kafka events from the Series iMessage Service
 """
+import sys
+import os
 import logging
 from flask import Flask
-from config import FLASK_CONFIG
-from kafka_consumer import initialize_kafka_consumer, close_kafka_consumer
-from event_handlers import process_kafka_event
-from routes import register_routes
-from db import init_db, close_db_session
+
+# Add project root to path to allow absolute imports
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from backend.config import FLASK_CONFIG
+from backend.kafka_client import initialize_kafka_consumer, close_kafka_consumer
+from backend.services import process_kafka_event
+from backend.routes import register_routes
+from backend.db import init_db, close_db_session
 
 # Configure logging
 logging.basicConfig(

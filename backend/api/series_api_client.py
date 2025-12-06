@@ -3,7 +3,7 @@ Series API client for sending messages and creating chats
 """
 import logging
 import requests
-from config import SERIES_API_CONFIG
+from backend.config import SERIES_API_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def send_message(to_phone_number: str, message_text: str, chat_id: int = None):
         
         if response.status_code in [200, 201]:
             result = response.json()
-            logger.info(f"Message sent successfully")
+            logger.debug(f"Message sent to {to_phone_number}")
             return result
         else:
             logger.error(f"Error sending message: {response.status_code} - {response.text}")
@@ -107,7 +107,7 @@ def create_group_chat(phone_numbers: list, display_name: str = None, initial_mes
         if response.status_code in [200, 201]:
             result = response.json()
             chat_id = result.get('id')
-            logger.info(f"Group chat created successfully with ID: {chat_id}")
+            logger.info(f"Group chat created (ID: {chat_id})")
             return chat_id
         else:
             logger.error(f"Error creating group chat: {response.status_code} - {response.text}")

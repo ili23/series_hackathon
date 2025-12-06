@@ -19,11 +19,9 @@ def get_whisper_model():
     """Get or load Whisper model (lazy loading)"""
     global _whisper_model
     if _whisper_model is None:
-        logger.info("Loading Whisper model (this may take a moment on first use)...")
-        # Using 'base' model - good balance of speed and accuracy
-        # Options: tiny, base, small, medium, large
+        logger.info("Loading Whisper model...")
         _whisper_model = whisper.load_model("base")
-        logger.info("Whisper model loaded successfully")
+        logger.debug("Whisper model loaded")
     return _whisper_model
 
 
@@ -108,7 +106,7 @@ def transcribe_voice_message_from_url(url: str):
     converted_path = None
     
     try:
-        logger.info(f"Transcribing voice message from URL: {url}")
+        logger.debug(f"Transcribing from URL: {url}")
         
         # Check for ffmpeg
         check_ffmpeg()
@@ -129,13 +127,10 @@ def transcribe_voice_message_from_url(url: str):
         elif 'ogg' in content_type or url.endswith('.ogg'):
             file_extension = '.ogg'
         
-        logger.info(f"Downloaded audio file, Content-Type: {content_type}, using extension: {file_extension}")
-        
         # Create a temporary file with appropriate extension
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
             temp_file.write(response.content)
             temp_path = temp_file.name
-        
         logger.info(f"Saved audio to temporary file: {temp_path}")
         
         # Try to convert to WAV if not already WAV (helps with compatibility)
@@ -144,12 +139,12 @@ def transcribe_voice_message_from_url(url: str):
             audio_path = converted_path if converted_path != temp_path else temp_path
         else:
             audio_path = temp_path
-        
         try:
             # Load Whisper model
             model = get_whisper_model()
             
             # First, transcribe in original language
+
             logger.info("Transcribing in original language...")
             result_original = model.transcribe(audio_path, task="transcribe")
             original_text = result_original.get('text', '').strip()
@@ -160,10 +155,7 @@ def transcribe_voice_message_from_url(url: str):
             result_english = model.transcribe(audio_path, task="translate")
             english_text = result_english.get('text', '').strip()
             
-            logger.info("Transcription successful")
-            logger.info(f"  Original language: {detected_language}")
-            logger.info(f"  Original text length: {len(original_text)} characters")
-            logger.info(f"  English text length: {len(english_text)} characters")
+            logger.debug(f"Transcribed [{detected_language}]: {len(original_text)} chars → EN: {len(english_text)} chars")
             
             return {
                 'success': True,
