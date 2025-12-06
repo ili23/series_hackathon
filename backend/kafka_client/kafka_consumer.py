@@ -6,7 +6,7 @@ import logging
 import time
 from threading import Thread
 from kafka import KafkaConsumer
-from kafka.errors import KafkaError
+from kafka.errors import KafkaError, KafkaTimeoutError
 from config import KAFKA_CONFIG
 
 logger = logging.getLogger(__name__)
