@@ -8,6 +8,7 @@ from config import FLASK_CONFIG
 from kafka_client import initialize_kafka, close_kafka_connections
 from event_handlers import process_kafka_event
 from routes import register_routes
+from database import init_database
 
 # Configure logging
 logging.basicConfig(
@@ -21,6 +22,9 @@ logging.getLogger('kafka').setLevel(logging.WARNING)
 
 # Initialize Flask app
 app = Flask(__name__)
+
+# Initialize database
+init_database()
 
 # Register routes
 register_routes(app)

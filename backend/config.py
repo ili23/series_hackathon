@@ -30,3 +30,8 @@ SERIES_API_CONFIG = {
     'sender_number': os.getenv('SENDER_NUMBER', '+16463230991'),
 }
 
+# OpenAI Configuration
+OPENAI_CONFIG = {
+    'api_key': os.getenv('OPENAI_API_KEY', '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'),
+}
+
