@@ -14,10 +14,19 @@ logger = logging.getLogger(__name__)
 
 class KafkaConsumerManager:
     """Manages Kafka consumer instance and lifecycle"""
+    # Defaults in case __init__ is bypassed in a long-lived process
+    consumer = None
+    consumer_thread = None
+    running = False
+    restart_count = 0
+    max_restarts = 10
     
     def __init__(self):
         self.consumer = None
         self.consumer_thread = None
+        self.running = False
+        self.restart_count = 0
+        self.max_restarts = 10
     
     def create_consumer(self):
         """Create and configure Kafka consumer"""

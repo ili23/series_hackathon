@@ -25,7 +25,7 @@ FLASK_CONFIG = {
 
 # Series API Configuration
 SERIES_API_CONFIG = {
-    'base_url': os.getenv('SERIES_API_BASE_URL', 'https://api.series.im'),  # Update if different
+    'base_url': os.getenv('SERIES_API_BASE_URL', 'https://series-hackathon-service-202642739529.us-east1.run.app'),  # Update if different
     'api_key': KAFKA_CONFIG['api_key'],  # Same API key
     'sender_number': os.getenv('SENDER_NUMBER', '+16463230991'),
 }
