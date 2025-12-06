@@ -5,13 +5,8 @@ import json
 import logging
 from threading import Thread
 from kafka import KafkaConsumer
-<<<<<<< HEAD:backend/kafka_consumer.py
 from kafka.errors import KafkaError
 from config import KAFKA_CONFIG
-=======
-from kafka.errors import KafkaError, KafkaTimeoutError
-from backend.config import KAFKA_CONFIG
->>>>>>> 773ea31 (refactor):backend/kafka_client/kafka_consumer.py
 
 logger = logging.getLogger(__name__)
 
