@@ -3,6 +3,7 @@ Event handlers for processing Kafka events
 """
 import json
 import logging
+from voice_processor import process_voice_attachments, is_audio_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +18,32 @@ def handle_message_received(event_data):
     from_phone = event_data.get('from_phone')
     text = event_data.get('text')
     is_read = event_data.get('is_read')
+    attachments = event_data.get('attachments', [])
     
     logger.info(f"New message from {from_phone} in chat {chat_id}: {text}")
+    
+    # Check for voice message attachments
+    if attachments:
+        logger.info(f"Message has {len(attachments)} attachment(s)")
+        
+        # Check if any are voice/audio messages
+        voice_attachments = [att for att in attachments if is_audio_attachment(att)]
+        
+        if voice_attachments:
+            logger.info(f"Found {len(voice_attachments)} voice message(s), transcribing...")
+            
+            # Process voice attachments (transcribe to English)
+            transcriptions = process_voice_attachments(voice_attachments, translate_to_english=True)
+            
+            for i, transcription in enumerate(transcriptions):
+                if transcription.get('success'):
+                    logger.info(f"Voice message {i+1} transcription: {transcription['text']}")
+                    logger.info(f"  Detected language: {transcription.get('language', 'unknown')}")
+                    
+                    # TODO: Store transcription in database
+                    # TODO: Send transcription back to user or store for later
+                else:
+                    logger.error(f"Failed to transcribe voice message {i+1}: {transcription.get('error')}")
     
     # TODO: Add your business logic here
     # - Store message in database
