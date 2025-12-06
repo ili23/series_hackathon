@@ -3,7 +3,7 @@ Test script to send test messages to Kafka
 """
 import json
 import sys
-from kafka_client import create_kafka_producer, get_kafka_producer
+from kafka_producer import create_kafka_producer, get_kafka_producer
 from config import KAFKA_CONFIG
 
 

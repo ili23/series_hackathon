@@ -3,7 +3,7 @@ Flask routes for the Series iMessage Service Backend
 """
 import logging
 from flask import jsonify, request
-from kafka_client import get_kafka_consumer
+from kafka_consumer import get_kafka_consumer, is_kafka_consumer_ready
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +14,17 @@ def register_routes(app):
     @app.route('/')
     def health_check():
         """Health check endpoint"""
+        consumer = get_kafka_consumer()
+        consumer_ready = is_kafka_consumer_ready()
+        
         return jsonify({
             'status': 'healthy',
             'service': 'Series iMessage Backend',
-            'kafka_connected': get_kafka_consumer() is not None
+            'kafka_consumer': {
+                'exists': consumer is not None,
+                'ready': consumer_ready,
+                'assigned_partitions': len(consumer.assignment()) if consumer else 0
+            }
         })
     
     @app.route('/api/events', methods=['GET'])

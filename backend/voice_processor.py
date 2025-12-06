@@ -28,7 +28,11 @@ def get_whisper_model():
 def is_audio_attachment(attachment):
     """Check if attachment is an audio/voice message"""
     mime_type = attachment.get('mime_type', '').lower()
-    audio_types = ['audio/m4a', 'audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4a']
+    # Check if it starts with 'audio/' to catch all audio formats including audio/mp3, audio/mpeg, etc.
+    if mime_type.startswith('audio/'):
+        return True
+    # Also check for specific known audio types for backward compatibility
+    audio_types = ['audio/m4a', 'audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/mp4a']
     return any(mime_type.startswith(audio_type) for audio_type in audio_types)
 
 
@@ -37,7 +41,7 @@ def transcribe_voice_message_from_url(url: str):
     Transcribe a voice message from a URL using local Whisper model
     
     Args:
-        url: URL to the audio file (mp4a or other audio format)
+        url: URL to the audio file (mp4a, mp3, or other audio format)
     
     Returns:
         dict with 'text', 'language', 'original_text', and 'success' keys
@@ -49,10 +53,26 @@ def transcribe_voice_message_from_url(url: str):
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.m4a') as temp_file:
+        # Determine file extension from Content-Type header or URL
+        content_type = response.headers.get('Content-Type', '').lower()
+        file_extension = '.m4a'  # default
+        if 'mp3' in content_type or url.endswith('.mp3'):
+            file_extension = '.mp3'
+        elif 'mp4' in content_type or url.endswith('.mp4'):
+            file_extension = '.mp4'
+        elif 'wav' in content_type or url.endswith('.wav'):
+            file_extension = '.wav'
+        elif 'ogg' in content_type or url.endswith('.ogg'):
+            file_extension = '.ogg'
+        
+        logger.info(f"Downloaded audio file, Content-Type: {content_type}, using extension: {file_extension}")
+        
+        # Create a temporary file with appropriate extension
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
             temp_file.write(response.content)
             temp_path = temp_file.name
+        
+        logger.info(f"Saved audio to temporary file: {temp_path}")
         
         try:
             # Load Whisper model

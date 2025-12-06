@@ -76,7 +76,7 @@ def create_group_chat(phone_numbers: list, display_name: str = None, initial_mes
     Args:
         phone_numbers: List of phone numbers (E.164 format)
         display_name: Optional display name for the group
-        initial_message: Optional initial message to send
+        initial_message: Optional initial message to send (defaults to empty string if not provided)
     
     Returns:
         Chat ID if successful, None otherwise
@@ -88,16 +88,14 @@ def create_group_chat(phone_numbers: list, display_name: str = None, initial_mes
             'send_from': SENDER_NUMBER,
             'chat': {
                 'phone_numbers': phone_numbers
+            },
+            'message': {
+                'text': initial_message if initial_message else ''
             }
         }
         
         if display_name:
             payload['chat']['display_name'] = display_name
-        
-        if initial_message:
-            payload['message'] = {
-                'text': initial_message
-            }
         
         headers = {
             'Authorization': f'Bearer {API_KEY}',

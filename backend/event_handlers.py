@@ -30,13 +30,17 @@ def handle_message_received(event_data):
     if attachments:
         logger.info(f"Message has {len(attachments)} attachment(s)")
         
+        # Log all attachment types for debugging
+        for i, att in enumerate(attachments):
+            logger.info(f"  Attachment {i+1}: mime_type={att.get('mime_type')}, filename={att.get('filename')}, is_audio={is_audio_attachment(att)}")
+        
         # Check if any are voice/audio messages
         voice_attachments = [att for att in attachments if is_audio_attachment(att)]
         
         if voice_attachments:
-            logger.info(f"Found {len(voice_attachments)} voice message(s), transcribing...")
+            logger.info(f"Found {len(voice_attachments)} voice message(s), transcribing with local Whisper...")
             
-            # Process voice attachments (transcribe to English)
+            # Process voice attachments (transcribe to English using local Whisper)
             transcriptions = process_voice_attachments(voice_attachments, translate_to_english=True)
             
             for i, transcription in enumerate(transcriptions):
@@ -76,38 +80,52 @@ def handle_message_received(event_data):
                     
                     # Store voice message in database
                     if from_phone:
+                        logger.info(f"Storing voice message in database for {from_phone}...")
                         # Ensure user exists in database
-                        add_to_user_table(from_phone, "", "")  # Will create or update user
+                        try:
+                            add_to_user_table(from_phone, "", "")  # Will create or update user
+                            logger.info(f"User {from_phone} ensured in database")
+                        except Exception as e:
+                            logger.error(f"Error ensuring user in database: {e}", exc_info=True)
                         
                         # Add voice message
-                        voice_msg_id = add_voice_message(
-                            phone_number=from_phone,
-                            transcription=original_text,  # Store original language transcription
-                            url=attachment_url,
-                            primary_language=language_code,
-                            metadata={
-                                'filename': attachment_filename,
-                                'mime_type': attachment_mime_type
-                            },
-                            timestamp=datetime.utcnow()
-                        )
-                        
-                        if voice_msg_id:
-                            print(f"✅ Successfully saved voice message to database (ID: {voice_msg_id})")
-                            logger.info(f"Successfully saved voice message {voice_msg_id} for {from_phone}")
+                        try:
+                            voice_msg_id = add_voice_message(
+                                phone_number=from_phone,
+                                transcription=original_text,  # Store original language transcription
+                                url=attachment_url,
+                                primary_language=language_code,
+                                metadata={
+                                    'filename': attachment_filename,
+                                    'mime_type': attachment_mime_type
+                                },
+                                timestamp=datetime.utcnow()
+                            )
                             
-                            # Check if this is a new language and trigger conversation flow
-                            from conversation_flow import is_new_language_for_user
-                            if is_new_language_for_user(from_phone, language_name):
-                                print(f"🆕 New language detected: {language_name} for {from_phone}")
-                                logger.info(f"New language {language_name} detected for {from_phone}, starting conversation flow")
-                                handle_new_language_detected(from_phone, language_name, chat_id)
+                            if voice_msg_id:
+                                print(f"✅ Successfully saved voice message to database (ID: {voice_msg_id})")
+                                logger.info(f"Successfully saved voice message {voice_msg_id} to database for {from_phone}")
+                                
+                                # Check if this is a new language and trigger conversation flow
+                                try:
+                                    from conversation_flow import is_new_language_for_user
+                                    if is_new_language_for_user(from_phone, language_name):
+                                        print(f"🆕 New language detected: {language_name} for {from_phone}")
+                                        logger.info(f"New language {language_name} detected for {from_phone}, starting conversation flow")
+                                        handle_new_language_detected(from_phone, language_name, chat_id)
+                                    else:
+                                        print(f"✅ Language {language_name} already exists for {from_phone}")
+                                        logger.info(f"Language {language_name} already exists for {from_phone}")
+                                except Exception as e:
+                                    logger.error(f"Error checking/processing new language: {e}", exc_info=True)
                             else:
-                                print(f"✅ Language {language_name} already exists for {from_phone}")
-                                logger.info(f"Language {language_name} already exists for {from_phone}")
-                        else:
-                            print(f"⚠️  Failed to save voice message to database")
-                            logger.warning(f"Failed to save voice message for {from_phone}")
+                                print(f"⚠️  Failed to save voice message to database (add_voice_message returned None)")
+                                logger.error(f"Failed to save voice message to database for {from_phone} - add_voice_message returned None")
+                        except Exception as e:
+                            print(f"⚠️  Exception while saving voice message to database: {e}")
+                            logger.error(f"Exception while saving voice message to database for {from_phone}: {e}", exc_info=True)
+                    else:
+                        logger.warning(f"Cannot save voice message: from_phone is missing or None")
                 else:
                     error = transcription.get('error', 'Unknown error')
                     print("\n" + "="*80)
@@ -169,8 +187,11 @@ def process_kafka_event(event):
         elif event_type == 'typing_indicator.removed':
             handle_typing_indicator_removed(data)
         else:
-            logger.warning(f"Unknown event type: {event_type}")
+            logger.warning(f"Unknown event type: {event_type} - event will be logged but not processed")
+            logger.debug(f"Full event data: {json.dumps(event, indent=2)}")
             
     except Exception as e:
         logger.error(f"Error processing event: {e}", exc_info=True)
+        # Re-raise to ensure the error is logged at the Kafka consumer level too
+        raise
 
