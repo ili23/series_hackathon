@@ -3,6 +3,7 @@ Kafka consumer for receiving messages
 """
 import json
 import logging
+import time
 from threading import Thread
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
@@ -40,11 +41,6 @@ class KafkaConsumerManager:
             return None
     
     def _consume_messages(self, event_processor):
-<<<<<<< HEAD:backend/kafka_consumer.py
-        """Consume messages from Kafka (internal method)"""
-        if not self.consumer:
-            self.consumer = self.create_consumer()
-=======
         """Consume messages from Kafka with automatic restart on heartbeat failures"""
         while self.running and self.restart_count < self.max_restarts:
             try:
@@ -181,7 +177,6 @@ class KafkaConsumerManager:
                     except:
                         pass
                     self.consumer = None
->>>>>>> 773ea31 (refactor):backend/kafka_client/kafka_consumer.py
         
         if not self.consumer:
             logger.error("Failed to create Kafka consumer")
@@ -225,12 +220,8 @@ class KafkaConsumerManager:
     
     def start(self, event_processor):
         """Start consuming messages in a background thread"""
-<<<<<<< HEAD:backend/kafka_consumer.py
-        logger.info("Initializing Kafka consumer...")
-=======
         self.running = True
         self.restart_count = 0
->>>>>>> 773ea31 (refactor):backend/kafka_client/kafka_consumer.py
         
         # Start consumer in background thread
         self.consumer_thread = Thread(target=self._consume_messages, args=(event_processor,), daemon=True)
