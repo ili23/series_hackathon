@@ -90,7 +90,7 @@ def handle_message_received(event_data):
                                         response_message += f"\n🇬🇧 English: {english_text}"
                                     response_message += f"\n🌐 Language: {language_name}"
                                     
-                                    send_message(from_phone, response_message, chat_id)
+                                    # send_message(from_phone, response_message, chat_id)
                                 except Exception as e:
                                     logger.error(f"Error sending transcription confirmation: {e}", exc_info=True)
                                 

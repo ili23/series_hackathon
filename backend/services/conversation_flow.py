@@ -15,13 +15,44 @@ from backend.db.accessors import (
 )
 from backend.db.database import get_db_session
 from backend.db.models import Language, User
-from backend.api.series_api_client import send_message, create_group_chat
+from backend.api.series_api_client import send_message, create_group_chat, start_typing, stop_typing
 from backend.services.language_mapper import get_language_name
 
 logger = logging.getLogger(__name__)
 
 # In-memory conversation state store (per-process)
 _CONVERSATION_STATES = {}
+
+
+def send_message_with_typing(to_phone_number: str, message_text: str, chat_id: int = None):
+    """
+    Send a message with typing indicator.
+    Shows typing indicator before sending, then stops it after.
+    ALWAYS uses agent number (+16463230991) for typing indicators.
+    
+    Args:
+        to_phone_number: Recipient phone number (E.164 format) or can be None if chat_id is provided
+        message_text: Message text to send
+        chat_id: Optional existing chat ID to send to
+    """
+    import time
+    
+    # Start typing indicator if we have a chat_id
+    if chat_id:
+        logger.info(f"⌨️  Agent (+16463230991) is typing in chat {chat_id}...")
+        start_typing(chat_id)
+        # Small delay to show typing indicator (makes it more visible to user)
+        time.sleep(1.0)
+    
+    # Send the message
+    result = send_message(to_phone_number, message_text, chat_id)
+    
+    # Stop typing indicator if we have a chat_id
+    if chat_id:
+        stop_typing(chat_id)
+        logger.debug(f"⌨️  Agent stopped typing in chat {chat_id}")
+    
+    return result
 
 
 def is_new_language_for_user(phone_number: str, language_name: str):
@@ -114,7 +145,7 @@ def handle_new_language_detected(phone_number: str, language_name: str, chat_id:
     logger.info(f"   Reason: New language '{language_name}' detected from voice message")
     logger.info(f"   Message: '{message[:50]}...'")
     
-    send_message(phone_number, message, chat_id)
+    send_message_with_typing(phone_number, message, chat_id)
     # Persist context so we can rebuild state across events/restarts
     set_last_agent_message(
         phone_number,
@@ -153,7 +184,7 @@ def send_random_matching_user(phone_number: str, language_name: str, chat_id: in
         # No matching users found
         message = "Unfortunately, there are no other users who know this language currently."
         logger.info(f"❌ No matching users found for {phone_number} with language {language_name}")
-        send_message(phone_number, message, chat_id)
+        send_message_with_typing(phone_number, message, chat_id)
         return
     
     # Show random matching user from database
@@ -247,7 +278,7 @@ def handle_existing_language_detected(phone_number: str, language_name: str, cha
     logger.info(f"   Reason: Existing language '{language_name}' detected from voice message")
     logger.info(f"   Message: '{message[:50]}...'")
     
-    send_message(phone_number, message, chat_id)
+    send_message_with_typing(phone_number, message, chat_id)
     set_last_agent_message(
         phone_number,
         message,
@@ -287,7 +318,7 @@ def handle_add_language_response(phone_number: str, response_text: str, language
         # User declined
         clear_conversation_state(phone_number)
         message = "No problem! Let me know if you change your mind."
-        send_message(phone_number, message, chat_id)
+        send_message_with_typing(phone_number, message, chat_id)
         set_last_agent_message(
             phone_number,
             message,
@@ -370,7 +401,7 @@ def handle_matching_response(phone_number: str, response_text: str, language_nam
             clear_conversation_state(phone_number)
             message = "Unfortunately, there are no other users who know this language currently."
             logger.info(f"❌ No matching users found for {phone_number} with language {language_name}")
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             logger.info(f"No matches found for {phone_number} ({language_name})")
         else:
             # Show first matching user from database
@@ -437,7 +468,7 @@ def handle_matching_response(phone_number: str, response_text: str, language_nam
         # User declined matching
         clear_conversation_state(phone_number)
         message = "No problem! Let me know if you change your mind."
-        send_message(phone_number, message, chat_id)
+        send_message_with_typing(phone_number, message, chat_id)
         logger.debug(f"User {phone_number} declined match for {language_name}")
 
 
@@ -515,7 +546,7 @@ def handle_group_chat_response(phone_number: str, response_text: str, language_n
             logger.info(f"   Chat ID: {new_chat_id}")
             logger.info(f"   Participants: {unique_phone_numbers}")
             logger.info(f"   Group name: {group_name}")
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             logger.info(f"✅ Confirmation message sent to user {phone_number}")
         else:
             message = "Sorry, I couldn't create the group chat. Please try again later."
@@ -523,7 +554,7 @@ def handle_group_chat_response(phone_number: str, response_text: str, language_n
             logger.error(f"   Sender: {phone_number}")
             logger.error(f"   Matched user: {matched_user_phone}")
             logger.error(f"   Agent: {agent_number}")
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
     else:
         # User declined, ask if they want another match
         # Preserve shown_user_phones in state
@@ -531,7 +562,7 @@ def handle_group_chat_response(phone_number: str, response_text: str, language_n
         shown_phones = state.get('shown_user_phones', []) if state else []
         set_conversation_state(phone_number, 'asking_another_match', language_name, None, shown_phones)
         message = "Would you like me to match you with another user who knows this language?"
-        send_message(phone_number, message, chat_id)
+        send_message_with_typing(phone_number, message, chat_id)
         logger.debug(f"User {phone_number} declined group chat, requesting another match")
 
 
@@ -562,7 +593,7 @@ def handle_another_match_response(phone_number: str, response_text: str, languag
         if not available_users:
             clear_conversation_state(phone_number)
             message = "Sorry, there are no more users available who know this language."
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             logger.info(f"No more matches for {phone_number} ({language_name})")
         else:
             # Show another matching user
@@ -612,7 +643,7 @@ def handle_another_match_response(phone_number: str, response_text: str, languag
         # User declined
         clear_conversation_state(phone_number)
         message = "No problem! Feel free to ask for matches anytime."
-        send_message(phone_number, message, chat_id)
+        send_message_with_typing(phone_number, message, chat_id)
         logger.debug(f"User {phone_number} declined another match for {language_name}")
 
 
@@ -725,7 +756,7 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             # Ask if they want to be matched (workflow continues to asking_matching)
             set_conversation_state(phone_number, 'asking_matching', language_name)
             message = "Do you want to be matched with people who know this language?"
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             set_last_agent_message(
                 phone_number,
                 message,
@@ -742,13 +773,13 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             logger.info(f"   ❌ NO: User declined to add language. Exiting workflow.")
             clear_conversation_state(phone_number)
             message = "No problem! Let me know if you change your mind."
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             return  # Exit workflow
         else:
             # Invalid response, ask again
             logger.info(f"   ⚠️  Invalid response. Asking again...")
             message = "Please respond with 'yes' or 'no'. Do you want me to add this language to our table for future matching?"
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             set_last_agent_message(
                 phone_number,
                 message,
@@ -775,7 +806,7 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             logger.info(f"   ❌ NO: User declined matching. Exiting workflow.")
             clear_conversation_state(phone_number)
             message = "No problem! Let me know if you change your mind."
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             set_last_agent_message(
                 phone_number,
                 message,
@@ -789,7 +820,7 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             # Invalid response, ask again
             logger.info(f"   ⚠️  Invalid response. Asking again...")
             message = "Please respond with 'yes' or 'no'. Do you want to be matched with people who know this language?"
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             set_last_agent_message(
                 phone_number,
                 message,
@@ -810,40 +841,100 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
                 logger.info(f"   ✅ YES: User wants to create group chat. Creating group chat...")
                 
                 # Import agent number from config
-                from config import SERIES_API_CONFIG
+                # CRITICAL: Always use agent number (+16463230991) to create group chats
+                # Agent number is used ONLY for send_from, NOT as a participant
+                from backend.config import SERIES_API_CONFIG
                 agent_number = SERIES_API_CONFIG['sender_number']  # +16463230991
                 
+                logger.info(f"   🔑 GROUP CHAT CREATION: Using agent number {agent_number} to create group chat (send_from only, not a participant)")
+                
                 # Ensure phone numbers are in E.164 format
-                phone_numbers = []
-                for pn in [phone_number, matched_user_phone, agent_number]:
+                # IMPORTANT: Agent number is NOT included in participants list
+                logger.info(f"   📞 NORMALIZING PHONE NUMBERS:")
+                logger.info(f"      Original numbers:")
+                logger.info(f"         - Current sender (participant): {phone_number}")
+                logger.info(f"         - Matched user (participant): {matched_user_phone}")
+                logger.info(f"         - Agent (will create group chat, NOT a participant): {agent_number}")
+                
+                # Normalize participant numbers (user and matched user ONLY)
+                # Agent number is NOT included in participants list
+                participant_numbers = []
+                normalization_log = []
+                for pn in [phone_number, matched_user_phone]:
+                    original = pn
                     if not pn.startswith('+'):
                         if len(pn) == 10:
-                            phone_numbers.append(f"+1{pn}")
+                            normalized = f"+1{pn}"
+                            normalization_log.append(f"      {original} → {normalized} (added +1 prefix)")
                         else:
-                            phone_numbers.append(f"+{pn}")
+                            normalized = f"+{pn}"
+                            normalization_log.append(f"      {original} → {normalized} (added + prefix)")
+                        participant_numbers.append(normalized)
                     else:
-                        phone_numbers.append(pn)
+                        normalized = pn
+                        normalization_log.append(f"      {original} → {normalized} (already E.164)")
+                        participant_numbers.append(normalized)
                 
-                # Remove duplicates
+                for log_line in normalization_log:
+                    logger.info(log_line)
+                
+                # Remove duplicates from participants only
                 seen = set()
-                unique_phone_numbers = []
-                for pn in phone_numbers:
+                unique_participants = []
+                duplicates = []
+                for pn in participant_numbers:
                     if pn not in seen:
                         seen.add(pn)
-                        unique_phone_numbers.append(pn)
+                        unique_participants.append(pn)
+                    else:
+                        duplicates.append(pn)
                 
-                logger.info(f"   📋 Creating group chat with participants: {unique_phone_numbers}")
+                if duplicates:
+                    logger.warning(f"   ⚠️  DUPLICATE PHONE NUMBERS REMOVED: {duplicates}")
+                
+                logger.info(f"")
+                logger.info(f"   📋 FINAL GROUP CHAT PARTICIPANTS (users only, agent excluded):")
+                for idx, pn in enumerate(unique_participants, 1):
+                    if pn == unique_participants[0]:
+                        label = "Current sender (participant)"
+                    else:
+                        label = "Matched user (participant)"
+                    logger.info(f"      {idx}. {pn} ({label})")
+                logger.info(f"   🔑 Agent {agent_number} will create the group chat (send_from, NOT a participant)")
+                
                 group_name = f"{language_name} Language Exchange"
-                new_chat_id = create_group_chat(
-                    unique_phone_numbers,
+                logger.info(f"   🔨 Creating group chat via iMessage API")
+                logger.info(f"   📍 API Endpoint: https://series-hackathon-service-202642739529.us-east1.run.app/api/chats")
+                logger.info(f"   📤 Created by: {agent_number} (agent)")
+                logger.info(f"   👥 Participants: {unique_participants} (users only)")
+                
+                # create_group_chat() will ALWAYS use agent number for send_from
+                # Agent number is NOT included in participants list
+                result = create_group_chat(
+                    unique_participants,  # Only user participants, agent excluded
                     display_name=group_name,
                     initial_message=f"Welcome! This group was created for {language_name} language exchange."
                 )
                 
-                if new_chat_id:
+                # Check if result indicates success (200/201 response)
+                # A successful API response means the group chat was created or already exists
+                if result and (result.get('success') or result.get('chat_id') is not None):
+                    # Success - chat exists or was created (200/201 response)
+                    chat_id_result = result.get('chat_id')
+                    is_existing = result.get('is_existing', False)
+                    
                     clear_conversation_state(phone_number)
-                    message = f"Great! I've created a group chat for you with {matched_user_phone}."
-                    send_message(phone_number, message, chat_id)
+                    
+                    if is_existing:
+                        # Chat already exists between these users
+                        message = f"A group chat already exists between you and {matched_user_phone}. You can continue your conversation there!"
+                        logger.info(f"   ✅ Group chat already exists (ID: {chat_id_result}). Workflow EXITS.")
+                    else:
+                        # New chat was created or API returned success
+                        message = f"Great! I've created a group chat for you with {matched_user_phone}."
+                        logger.info(f"   ✅ Group chat created successfully (ID: {chat_id_result}). Workflow EXITS.")
+                    
+                    send_message_with_typing(phone_number, message, chat_id)
                     set_last_agent_message(
                         phone_number,
                         message,
@@ -852,10 +943,11 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
                         matched_user_phone=None,
                         shown_user_phones=[],
                     )
-                    logger.info(f"   ✅ Group chat created successfully. Workflow EXITS.")
                 else:
-                    message = "Sorry, I couldn't create the group chat. Please try again later."
-                    send_message(phone_number, message, chat_id)
+                    # Only send error if we got None or a failure response (not 200/201)
+                    # This means the API call actually failed (403, 500, etc.)
+                    message = "Sorry, I couldn't create the group chat. One of the phone numbers may not be authorized for this team. Please contact support."
+                    send_message_with_typing(phone_number, message, chat_id)
                     set_last_agent_message(
                         phone_number,
                         message,
@@ -865,6 +957,10 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
                         shown_user_phones=[],
                     )
                     logger.error(f"   ❌ Failed to create group chat. Workflow EXITS.")
+                    logger.error(f"   💡 TROUBLESHOOTING: Check Series API team settings to ensure all phone numbers are whitelisted:")
+                    logger.error(f"      - {phone_number} (current sender)")
+                    logger.error(f"      - {matched_user_phone} (matched user)")
+                    logger.error(f"      - {agent_number} (agent)")
                 
                 return  # Exit workflow
                 
@@ -878,7 +974,7 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
                 
                 set_conversation_state(phone_number, 'asking_another_match', language_name, None, shown_phones)
                 message = "Would you like me to match you with another user who knows this language?"
-                send_message(phone_number, message, chat_id)
+                send_message_with_typing(phone_number, message, chat_id)
                 set_last_agent_message(
                     phone_number,
                     message,
@@ -893,7 +989,7 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
                 # Invalid response, ask again
                 logger.info(f"   ⚠️  Invalid response. Asking again...")
                 message = "Please respond with 'yes' or 'no'. Would you like a group chat created with this user?"
-                send_message(phone_number, message, chat_id)
+                send_message_with_typing(phone_number, message, chat_id)
                 set_last_agent_message(
                     phone_number,
                     message,
@@ -924,7 +1020,7 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             if not available_users:
                 clear_conversation_state(phone_number)
                 message = "Sorry, there are no more users available who know this language."
-                send_message(phone_number, message, chat_id)
+                send_message_with_typing(phone_number, message, chat_id)
                 logger.info(f"   ❌ No more users. Workflow EXITS.")
                 return  # Exit workflow
             else:
@@ -980,7 +1076,7 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             logger.info(f"   ❌ NO: User declined another match. Exiting workflow.")
             clear_conversation_state(phone_number)
             message = "No problem! Feel free to ask for matches anytime."
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             set_last_agent_message(
                 phone_number,
                 message,
@@ -994,7 +1090,7 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             # Invalid response, ask again
             logger.info(f"   ⚠️  Invalid response. Asking again...")
             message = "Please respond with 'yes' or 'no'. Would you like me to match you with another user who knows this language?"
-            send_message(phone_number, message, chat_id)
+            send_message_with_typing(phone_number, message, chat_id)
             set_last_agent_message(
                 phone_number,
                 message,
