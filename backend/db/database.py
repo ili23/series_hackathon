@@ -49,8 +49,8 @@ def init_db():
         logger.info(f"Database initialized at {DB_PATH}")
         
         # Seed database with sample data (only if empty)
-        from .seed_data import seed_database
-        seed_database()
+        # from .seed_data import seed_database
+        # seed_database()
         
         return True
         

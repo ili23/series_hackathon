@@ -59,6 +59,14 @@ def send_message(to_phone_number: str, message_text: str, chat_id: int = None):
         if response.status_code in [200, 201]:
             result = response.json()
             logger.debug(f"Message sent to {to_phone_number}")
+            
+            # Store last agent message per user to handle out-of-order Kafka events
+            if to_phone_number:
+                try:
+                    from backend.db.accessors import set_last_agent_message
+                    set_last_agent_message(to_phone_number, message_text)
+                except Exception as e:
+                    logger.error(f"Error recording last agent message for {to_phone_number}: {e}", exc_info=True)
             return result
         else:
             logger.error(f"Error sending message: {response.status_code} - {response.text}")

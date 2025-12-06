@@ -202,6 +202,109 @@ def add_voice_message(
         session.close()
 
 
+def _serialize_shown_phones(shown_user_phones: Optional[List[str]]) -> Optional[str]:
+    if not shown_user_phones:
+        return None
+    # Deduplicate while preserving order
+    seen = set()
+    ordered = []
+    for pn in shown_user_phones:
+        if pn not in seen:
+            seen.add(pn)
+            ordered.append(pn)
+    return ",".join(ordered)
+
+
+def _deserialize_shown_phones(shown_user_phones: Optional[str]) -> List[str]:
+    if not shown_user_phones:
+        return []
+    return [pn for pn in shown_user_phones.split(",") if pn]
+
+
+def set_last_agent_message(
+    phone_number: str,
+    message_text: str,
+    state: Optional[str] = None,
+    language_name: Optional[str] = None,
+    matched_user_phone: Optional[str] = None,
+    shown_user_phones: Optional[List[str]] = None,
+) -> bool:
+    """
+    Persist the last message the agent sent to a user along with lightweight
+    context so conversation state can be rebuilt across Kafka events/restarts.
+    """
+    session = get_db_session()
+    try:
+        user = session.query(User).filter_by(phone_number=phone_number).first()
+        if not user:
+            logger.warning(f"User {phone_number} not found. Creating user to store last agent message...")
+            user = User(
+                phone_number=phone_number,
+                f_name="",
+                l_name=""
+            )
+            session.add(user)
+            session.flush()
+        
+        user.last_agent_sent_message = message_text
+        user.last_agent_state = state
+        user.last_agent_language = language_name
+        user.last_agent_matched_phone = matched_user_phone
+        user.last_agent_shown_phones = _serialize_shown_phones(shown_user_phones)
+        session.commit()
+        logger.debug(f"Updated last_agent_sent_message for {phone_number}")
+        return True
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error updating last agent message for {phone_number}: {e}", exc_info=True)
+        return False
+    finally:
+        session.close()
+
+
+def get_last_agent_context(phone_number: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve last agent message and conversation context for a user.
+    """
+    session = get_db_session()
+    try:
+        user = session.query(User).filter_by(phone_number=phone_number).first()
+        if not user:
+            return None
+        return {
+            "message": user.last_agent_sent_message,
+            "state": user.last_agent_state,
+            "language": user.last_agent_language,
+            "matched_user_phone": user.last_agent_matched_phone,
+            "shown_user_phones": _deserialize_shown_phones(user.last_agent_shown_phones),
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving last agent context for {phone_number}: {e}", exc_info=True)
+        return None
+    finally:
+        session.close()
+
+
+def get_latest_voice_message_language(phone_number: str) -> Optional[str]:
+    """
+    Fetch the primary_language code of the most recent voice message for a user.
+    """
+    session = get_db_session()
+    try:
+        vm = (
+            session.query(VoiceMessage)
+            .filter_by(phone_number=phone_number)
+            .order_by(VoiceMessage.timestamp.desc())
+            .first()
+        )
+        return vm.primary_language if vm else None
+    except Exception as e:
+        logger.error(f"Error getting latest voice language for {phone_number}: {e}", exc_info=True)
+        return None
+    finally:
+        session.close()
+
+
 def get_user_given_language(primary_language: str) -> List[Dict[str, Any]]:
     """
     Get all users who have a given language as their primary language

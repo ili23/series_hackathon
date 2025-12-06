@@ -15,6 +15,14 @@ class User(Base):
     f_name = Column(String, nullable=False)
     l_name = Column(String, nullable=False)
     bio = Column(Text, nullable=True)
+    # Last outbound agent message text for conversation continuity
+    last_agent_sent_message = Column(Text, nullable=True)
+    # Persist minimal conversation context so we can rebuild state across events
+    last_agent_state = Column(String, nullable=True)
+    last_agent_language = Column(String, nullable=True)
+    last_agent_matched_phone = Column(String, nullable=True)
+    # Comma-separated list of phones that have been shown to the user
+    last_agent_shown_phones = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

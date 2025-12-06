@@ -5,13 +5,22 @@ import logging
 import random
 from datetime import datetime
 from backend.db.accessors import (
-    add_language_for_user, add_to_user_table, get_user_given_language
+    add_language_for_user,
+    add_to_user_table,
+    get_user_given_language,
+    set_last_agent_message,
+    get_last_agent_context,
+    get_latest_voice_message_language,
 )
 from backend.db.database import get_db_session
 from backend.db.models import Language, User
 from backend.api.series_api_client import send_message, create_group_chat
+from backend.services.language_mapper import get_language_name
 
 logger = logging.getLogger(__name__)
+
+# In-memory conversation state store (per-process)
+_CONVERSATION_STATES = {}
 
 
 def is_new_language_for_user(phone_number: str, language_name: str):
@@ -43,24 +52,17 @@ def is_new_language_for_user(phone_number: str, language_name: str):
 
 def get_conversation_state(phone_number: str):
     """Get current conversation state for a user (stored in a simple way)"""
-    # For simplicity, we'll use a dictionary to track states
-    # In production, you might want to use a database table
-    if not hasattr(get_conversation_state, 'states'):
-        get_conversation_state.states = {}
-    return get_conversation_state.states.get(phone_number)
+    # In production, persist to DB/redis; here we keep per-process memory
+    return _CONVERSATION_STATES.get(phone_number)
 
 
 def set_conversation_state(phone_number: str, state: str, language_name: str = None, matched_user_phone: str = None, shown_user_phones: list = None):
     """Set conversation state for a user"""
-    if not hasattr(set_conversation_state, 'states'):
-        set_conversation_state.states = {}
-    
-    # Get existing state to preserve shown_user_phones if not provided
-    existing_state = get_conversation_state(phone_number) or {}
+    existing_state = _CONVERSATION_STATES.get(phone_number) or {}
     if shown_user_phones is None:
         shown_user_phones = existing_state.get('shown_user_phones', [])
-    
-    set_conversation_state.states[phone_number] = {
+
+    _CONVERSATION_STATES[phone_number] = {
         'state': state,
         'language_name': language_name,
         'matched_user_phone': matched_user_phone,
@@ -70,9 +72,8 @@ def set_conversation_state(phone_number: str, state: str, language_name: str = N
 
 def clear_conversation_state(phone_number: str):
     """Clear conversation state for a user"""
-    if hasattr(clear_conversation_state, 'states'):
-        if phone_number in clear_conversation_state.states:
-            del clear_conversation_state.states[phone_number]
+    if phone_number in _CONVERSATION_STATES:
+        del _CONVERSATION_STATES[phone_number]
 
 
 def handle_new_language_detected(phone_number: str, language_name: str, chat_id: int):
@@ -102,6 +103,15 @@ def handle_new_language_detected(phone_number: str, language_name: str, chat_id:
     logger.info(f"   Message: '{message[:50]}...'")
     
     send_message(phone_number, message, chat_id)
+    # Persist context so we can rebuild state across events/restarts
+    set_last_agent_message(
+        phone_number,
+        message,
+        state='asking_add_language',
+        language_name=language_name,
+        matched_user_phone=None,
+        shown_user_phones=[],
+    )
     
     logger.info(f"✅ Agent (+16463230991) sent message to user {phone_number} about adding language {language_name}")
 
@@ -192,6 +202,14 @@ def send_random_matching_user(phone_number: str, language_name: str, chat_id: in
     logger.info(f"   Language: {language_name}")
     
     send_message(phone_number, profile_text, chat_id)
+    set_last_agent_message(
+        phone_number,
+        profile_text,
+        state='showing_profile',
+        language_name=language_name,
+        matched_user_phone=matched_phone,
+        shown_user_phones=shown_phones,
+    )
     logger.info(f"✅ PROFILE SENT SUCCESSFULLY: Agent (+16463230991) sent profile of {matched_phone} to user {phone_number}")
 
 
@@ -218,6 +236,14 @@ def handle_existing_language_detected(phone_number: str, language_name: str, cha
     logger.info(f"   Message: '{message[:50]}...'")
     
     send_message(phone_number, message, chat_id)
+    set_last_agent_message(
+        phone_number,
+        message,
+        state='asking_matching',
+        language_name=language_name,
+        matched_user_phone=None,
+        shown_user_phones=[],
+    )
     
     logger.info(f"✅ Agent (+16463230991) sent message to user {phone_number} about matching for existing language {language_name}")
 
@@ -250,6 +276,14 @@ def handle_add_language_response(phone_number: str, response_text: str, language
         clear_conversation_state(phone_number)
         message = "No problem! Let me know if you change your mind."
         send_message(phone_number, message, chat_id)
+        set_last_agent_message(
+            phone_number,
+            message,
+            state=None,
+            language_name=None,
+            matched_user_phone=None,
+            shown_user_phones=[],
+        )
         logger.debug(f"User {phone_number} declined to add {language_name}")
 
 
@@ -350,6 +384,7 @@ def handle_matching_response(phone_number: str, response_text: str, language_nam
             # Build name - MUST include first name and last name separately
             f_name = matched_user.get('f_name', '').strip()
             l_name = matched_user.get('l_name', '').strip()
+            name_parts = [p for p in [f_name, l_name] if p]
             
             # Always show first name and last name separately
             if f_name:
@@ -615,9 +650,35 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
     state = get_conversation_state(phone_number)
     
     if not state:
-        # No active conversation state - not in workflow
-        logger.debug(f"No active conversation state for user {phone_number}, ignoring message")
-        return
+        # Attempt to rebuild state from persisted agent context
+        last_ctx = get_last_agent_context(phone_number)
+        if last_ctx and last_ctx.get("state"):
+            logger.info(f"🔄 Rehydrating conversation state from last_agent_sent_message for {phone_number}")
+            set_conversation_state(
+                phone_number,
+                last_ctx.get("state"),
+                last_ctx.get("language"),
+                last_ctx.get("matched_user_phone"),
+                last_ctx.get("shown_user_phones"),
+            )
+            state = get_conversation_state(phone_number)
+        # Guard: if still no state after rehydration, bail out safely
+        if not state:
+            # Fallback: infer from latest voice message and restart the flow
+            latest_lang_code = get_latest_voice_message_language(phone_number)
+            language_name = get_language_name(latest_lang_code) if latest_lang_code else None
+
+            if language_name:
+                is_new = is_new_language_for_user(phone_number, language_name)
+                if is_new:
+                    logger.info(f"No state; restarting flow as new language for {phone_number} ({language_name})")
+                    handle_new_language_detected(phone_number, language_name, chat_id)
+                else:
+                    logger.info(f"No state; restarting flow as existing language for {phone_number} ({language_name})")
+                    handle_existing_language_detected(phone_number, language_name, chat_id)
+            else:
+                logger.debug(f"No active conversation state and no voice history for user {phone_number}, ignoring message")
+            return
     
     state_name = state['state']
     language_name = state.get('language_name')
@@ -653,6 +714,14 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             set_conversation_state(phone_number, 'asking_matching', language_name)
             message = "Do you want to be matched with people who know this language?"
             send_message(phone_number, message, chat_id)
+            set_last_agent_message(
+                phone_number,
+                message,
+                state='asking_matching',
+                language_name=language_name,
+                matched_user_phone=None,
+                shown_user_phones=[],
+            )
             logger.info(f"   → Workflow continues to 'asking_matching' state (waiting for next message)")
             return  # Exit switch-case, workflow continues in asking_matching state
             
@@ -668,6 +737,14 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             logger.info(f"   ⚠️  Invalid response. Asking again...")
             message = "Please respond with 'yes' or 'no'. Do you want me to add this language proficiency to our table for future matching?"
             send_message(phone_number, message, chat_id)
+            set_last_agent_message(
+                phone_number,
+                message,
+                state='asking_add_language',
+                language_name=language_name,
+                matched_user_phone=None,
+                shown_user_phones=[],
+            )
             return  # Wait for next response
     
     elif state_name == 'asking_matching':
@@ -687,12 +764,28 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             clear_conversation_state(phone_number)
             message = "No problem! Let me know if you change your mind."
             send_message(phone_number, message, chat_id)
+            set_last_agent_message(
+                phone_number,
+                message,
+                state=None,
+                language_name=None,
+                matched_user_phone=None,
+                shown_user_phones=[],
+            )
             return  # Exit workflow
         else:
             # Invalid response, ask again
             logger.info(f"   ⚠️  Invalid response. Asking again...")
             message = "Please respond with 'yes' or 'no'. Do you want to be matched with people who know this language?"
             send_message(phone_number, message, chat_id)
+            set_last_agent_message(
+                phone_number,
+                message,
+                state='asking_matching',
+                language_name=language_name,
+                matched_user_phone=None,
+                shown_user_phones=[],
+            )
             return  # Wait for next response
     
     elif state_name == 'showing_profile':
@@ -739,10 +832,26 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
                     clear_conversation_state(phone_number)
                     message = f"Great! I've created a group chat for you with {matched_user_phone}."
                     send_message(phone_number, message, chat_id)
+                    set_last_agent_message(
+                        phone_number,
+                        message,
+                        state=None,
+                        language_name=None,
+                        matched_user_phone=None,
+                        shown_user_phones=[],
+                    )
                     logger.info(f"   ✅ Group chat created successfully. Workflow EXITS.")
                 else:
                     message = "Sorry, I couldn't create the group chat. Please try again later."
                     send_message(phone_number, message, chat_id)
+                    set_last_agent_message(
+                        phone_number,
+                        message,
+                        state=None,
+                        language_name=None,
+                        matched_user_phone=None,
+                        shown_user_phones=[],
+                    )
                     logger.error(f"   ❌ Failed to create group chat. Workflow EXITS.")
                 
                 return  # Exit workflow
@@ -758,6 +867,14 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
                 set_conversation_state(phone_number, 'asking_another_match', language_name, None, shown_phones)
                 message = "Would you like me to match you with another user who knows this language?"
                 send_message(phone_number, message, chat_id)
+                set_last_agent_message(
+                    phone_number,
+                    message,
+                    state='asking_another_match',
+                    language_name=language_name,
+                    matched_user_phone=None,
+                    shown_user_phones=shown_phones,
+                )
                 logger.info(f"   → Workflow continues to 'asking_another_match' state (waiting for next message)")
                 return  # Continue to next state
             else:
@@ -765,6 +882,14 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
                 logger.info(f"   ⚠️  Invalid response. Asking again...")
                 message = "Please respond with 'yes' or 'no'. Would you like a group chat created with this user?"
                 send_message(phone_number, message, chat_id)
+                set_last_agent_message(
+                    phone_number,
+                    message,
+                    state='showing_profile',
+                    language_name=language_name,
+                    matched_user_phone=matched_user_phone,
+                    shown_user_phones=get_conversation_state(phone_number).get('shown_user_phones', []) if get_conversation_state(phone_number) else [],
+                )
                 return  # Wait for next response
     
     elif state_name == 'asking_another_match':
@@ -827,6 +952,14 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
                 profile_text += f"\nWould you like a group chat created with this user?"
                 
                 send_message(phone_number, profile_text, chat_id)
+                set_last_agent_message(
+                    phone_number,
+                    profile_text,
+                    state='showing_profile',
+                    language_name=language_name,
+                    matched_user_phone=matched_phone,
+                    shown_user_phones=shown_phones,
+                )
                 logger.info(f"   ✅ Another profile sent. Workflow continues to 'showing_profile' state (waiting for next message)")
                 return  # Continue to showing_profile state
                 
@@ -836,12 +969,28 @@ def process_conversation(phone_number: str, message_text: str, chat_id: int):
             clear_conversation_state(phone_number)
             message = "No problem! Feel free to ask for matches anytime."
             send_message(phone_number, message, chat_id)
+            set_last_agent_message(
+                phone_number,
+                message,
+                state=None,
+                language_name=None,
+                matched_user_phone=None,
+                shown_user_phones=[],
+            )
             return  # Exit workflow
         else:
             # Invalid response, ask again
             logger.info(f"   ⚠️  Invalid response. Asking again...")
             message = "Please respond with 'yes' or 'no'. Would you like me to match you with another user who knows this language?"
             send_message(phone_number, message, chat_id)
+            set_last_agent_message(
+                phone_number,
+                message,
+                state='asking_another_match',
+                language_name=language_name,
+                matched_user_phone=None,
+                shown_user_phones=get_conversation_state(phone_number).get('shown_user_phones', []) if get_conversation_state(phone_number) else [],
+            )
             return  # Wait for next response
     
     else:
