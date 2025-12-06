@@ -8,6 +8,7 @@ from config import FLASK_CONFIG
 from kafka_client import initialize_kafka, close_kafka_connections
 from event_handlers import process_kafka_event
 from routes import register_routes
+from db import init_db, close_db_session
 
 # Configure logging
 logging.basicConfig(
@@ -22,6 +23,9 @@ logging.getLogger('kafka').setLevel(logging.WARNING)
 # Initialize Flask app
 app = Flask(__name__)
 
+# Initialize database
+init_db()
+
 # Register routes
 register_routes(app)
 
@@ -30,9 +34,10 @@ initialize_kafka(process_kafka_event)
 
 # Cleanup on shutdown
 @app.teardown_appcontext
-def teardown_kafka(exception):
-    """Close Kafka connections on app shutdown"""
+def teardown(exception):
+    """Close Kafka connections and database session on app shutdown"""
     close_kafka_connections()
+    close_db_session()
 
 
 if __name__ == '__main__':
